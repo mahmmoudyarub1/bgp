@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BGP Live Path Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #121212; color: #fff; }
+        #controls { position: absolute; top: 15px; right: 15px; z-index: 1000; background: rgba(20,20,20,0.85); padding: 15px; border-radius: 8px; backdrop-filter: blur(5px); box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        input { padding: 8px 12px; border-radius: 4px; border: 1px solid #333; background: #222; color: #fff; width: 180px; }
+        button { padding: 8px 15px; border-radius: 4px; border: none; background: #007bff; color: #fff; cursor: pointer; font-weight: bold; }
+        button:hover { background: #0056b3; }
+        #map { width: 100vw; height: 100vh; }
+        #info { margin-top: 10px; font-size: 13px; max-width: 250px; word-wrap: break-word; color: #4caf50; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <input type="text" id="ipInput" value="91.205.42.55" placeholder="أدخل IP هنا">
+        <button onclick="traceIP()">رسم المسار</button>
+        <div id="info"></div>
+    </div>
+    <div id="map"></div>
+
+    <script>
+        const map = L.map('map').setView([30, 15], 3);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap &copy; CARTO',
+            maxZoom: 19
+        }).addTo(map);
+
+        let polyline = null;
+        let markers = [];
+
+        async function traceIP() {
+            const ip = document.getElementById('ipInput').value;
+            const infoDiv = document.getElementById('info');
+            infoDiv.innerText = "جاري جلب مسار BGP...";
+
+            if (polyline) map.removeLayer(polyline);
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
+
+            try {
+                const res = await fetch(`/api/trace?ip=${ip}`);
+                const data = await res.json();
+
+                if (data.error) {
+                    infoDiv.innerText = "خطأ: " + data.error;
+                    return;
+                }
+
+                infoDiv.innerText = "AS Path: " + data.as_path.join(' ➔ ');
+
+                const latLngs = [];
+                data.nodes.forEach((node, idx) => {
+                    if (node.lat && node.lng) {
+                        const pt = [node.lat, node.lng];
+                        latLngs.push(pt);
+
+                        const marker = L.circleMarker(pt, {
+                            radius: 7,
+                            color: idx === data.nodes.length - 1 ? '#ff4d4d' : '#00bcff',
+                            fillColor: '#fff',
+                            fillOpacity: 0.9
+                        }).addTo(map).bindPopup(`<b>AS${node.asn}</b><br>الدولة: ${node.country || 'غير معروف'}`);
+
+                        markers.push(marker);
+                    }
+                });
+
+                if (latLngs.length > 1) {
+                    polyline = L.polyline(latLngs, { color: '#00ffcc', weight: 3, opacity: 0.8, dashArray: '5, 10' }).addTo(map);
+                    map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+                }
+            } catch (err) {
+                infoDiv.innerText = "فشل في الاتصال بالخادوم";
+            }
+        }
+
+        traceIP();
+    </script>
+</body>
+</html>
