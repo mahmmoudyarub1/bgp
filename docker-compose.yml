@@ -1,0 +1,9 @@
+version: '3.8'
+
+services:
+  bgp-map:
+    build: .
+    container_name: bgp_live_map
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
