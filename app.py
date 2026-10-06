@@ -16,38 +16,33 @@ def trace():
         bgp_routes = bgp_res.get('data', {}).get('bgp_state', [])
         
         if not bgp_routes:
-            return jsonify({'error': 'No BGP path found for this IP'}), 404
+            return jsonify({'error': 'لم يتم العثور على مسار BGP لهذا الـ IP'}), 404
 
-        # Get the first active route path
+        # Get the active route path
         path = bgp_routes[0].get('path', [])
         
-        # 2. Resolve Geolocation for each ASN in the path
+        # Target ASN is the last ASN in the path
+        target_asn = path[-1] if path else 'N/A'
+        
+        # 2. Get Name & Details for each ASN in the path
         path_nodes = []
         for asn in path:
-            as_res = requests.get(f'https://stat.ripe.net/data/geoloc/data.json?resource=AS{asn}').json()
-            locations = as_res.get('data', {}).get('located_resources', [])
+            overview = requests.get(f'https://stat.ripe.net/data/as-overview/data.json?resource=AS{asn}').json()
+            holder = overview.get('data', {}).get('holder', f'AS{asn}')
             
-            if locations and len(locations) > 0:
-                loc = locations[0]
-                path_nodes.append({
-                    'asn': asn,
-                    'lat': loc.get('latitude'),
-                    'lng': loc.get('longitude'),
-                    'country': loc.get('country')
-                })
-            else:
-                overview = requests.get(f'https://stat.ripe.net/data/as-overview/data.json?resource=AS{asn}').json()
-                holder = overview.get('data', {}).get('holder', f'AS{asn}')
-                path_nodes.append({
-                    'asn': asn,
-                    'holder': holder,
-                    'lat': None,
-                    'lng': None
-                })
+            path_nodes.append({
+                'asn': f"AS{asn}",
+                'name': holder
+            })
+
+        # Get Target ASN Name
+        target_holder = path_nodes[-1]['name'] if path_nodes else 'N/A'
 
         return jsonify({
-            'target': target_ip,
-            'as_path': path,
+            'target_ip': target_ip,
+            'target_asn': f"AS{target_asn}",
+            'target_holder': target_holder,
+            'as_path': [node['asn'] for node in path_nodes],
             'nodes': path_nodes
         })
     except Exception as e:
