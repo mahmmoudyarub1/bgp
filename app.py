@@ -3,6 +3,43 @@ import requests
 
 app = Flask(__name__)
 
+# Cache dictionary for ASN names to avoid repeated calls
+ASN_NAME_CACHE = {
+    '174': 'Cogent Communications, LLC',
+    '3356': 'Lumen Technologies (Level 3)',
+    '1299': 'Arelion (Telia Carrier)',
+    '2914': 'NTT Communications',
+    '6453': 'Tata Communications'
+}
+
+def get_asn_name(asn):
+    asn_str = str(asn).replace('AS', '')
+    if asn_str in ASN_NAME_CACHE:
+        return ASN_NAME_CACHE[asn_str]
+    
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    try:
+        # Fast query to RIPE overview
+        r = requests.get(f'https://stat.ripe.net/data/as-overview/data.json?resource=AS{asn_str}', headers=headers, timeout=2).json()
+        holder = r.get('data', {}).get('holder')
+        if holder:
+            ASN_NAME_CACHE[asn_str] = holder
+            return holder
+    except:
+        pass
+    
+    try:
+        # Fallback to RDAP / RIPEstat name query
+        r = requests.get(f'https://rdap.db.ripe.net/autnum/{asn_str}', headers=headers, timeout=2).json()
+        name = r.get('name') or r.get('handle')
+        if name:
+            ASN_NAME_CACHE[asn_str] = name
+            return name
+    except:
+        pass
+
+    return f"AS{asn_str} Network"
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -17,15 +54,18 @@ def trace():
     headers = {'User-Agent': 'BGP-Trace-App/1.0'}
 
     try:
-        # 1. Get BGP Path from RIPEstat
+        # 1. Fetch BGP path
         url = f'https://stat.ripe.net/data/bgp-state/data.json?resource={target_ip}'
-        bgp_res = requests.get(url, headers=headers, timeout=10).json()
-        
+        bgp_res = requests.get(url, headers=headers, timeout=5).json()
         bgp_state = bgp_res.get('data', {}).get('bgp_state', [])
 
-        if not bgp_state:
-            # Fallback to ip-api to get at least Origin AS if BGP path is not full
-            ip_info = requests.get(f'http://ip-api.com/json/{target_ip}?fields=status,message,as,org,isp', timeout=5).json()
+        path = []
+        if bgp_state:
+            path = bgp_state[0].get('path', [])
+
+        # If no BGP path found or RIPE timed out, fallback to IP-API info
+        if not path:
+            ip_info = requests.get(f'http://ip-api.com/json/{target_ip}?fields=status,message,as,org,isp', timeout=4).json()
             if ip_info.get('status') == 'success':
                 as_raw = ip_info.get('as', '')
                 asn_num = as_raw.split()[0].replace('AS', '') if as_raw else 'Unknown'
@@ -38,22 +78,12 @@ def trace():
                     'as_path': [f"AS{asn_num}"],
                     'nodes': [{'asn': f"AS{asn_num}", 'name': org_name}]
                 })
-            return jsonify({'error': 'لم يتم العثور على مسار BGP لهذه الشريحة/الـ IP'}), 404
+            return jsonify({'error': 'لم يتم العثور على مسار BGP لهذا الـ IP'}), 404
 
-        # Extract path from the first available route
-        path = bgp_state[0].get('path', [])
-        if not path:
-            return jsonify({'error': 'المسار فارغ لهذا الـ IP'}), 404
-
-        # 2. Get Holder Name for each ASN in path
+        # 2. Build nodes list with names
         path_nodes = []
         for asn in path:
-            try:
-                ov = requests.get(f'https://stat.ripe.net/data/as-overview/data.json?resource=AS{asn}', headers=headers, timeout=4).json()
-                holder = ov.get('data', {}).get('holder', f'AS{asn}')
-            except:
-                holder = f"AS{asn} Holder"
-
+            holder = get_asn_name(asn)
             path_nodes.append({
                 'asn': f"AS{asn}",
                 'name': holder
@@ -70,10 +100,26 @@ def trace():
             'nodes': path_nodes
         })
 
-    except requests.exceptions.Timeout:
-        return jsonify({'error': 'انتهت مهلة الاتصال بخوادم BGP (Timeout)، حاول مرة أخرى'}), 504
     except Exception as e:
-        return jsonify({'error': f'حدث خطأ غير متوقع: {str(e)}'}), 500
+        # General fallback if any network connection drops completely
+        try:
+            ip_info = requests.get(f'http://ip-api.com/json/{target_ip}?fields=status,message,as,org,isp', timeout=4).json()
+            if ip_info.get('status') == 'success':
+                as_raw = ip_info.get('as', '')
+                asn_num = as_raw.split()[0].replace('AS', '') if as_raw else 'Unknown'
+                org_name = ip_info.get('org') or ip_info.get('isp') or 'Unknown'
+                
+                return jsonify({
+                    'target_ip': target_ip,
+                    'target_asn': f"AS{asn_num}",
+                    'target_holder': org_name,
+                    'as_path': [f"AS{asn_num}"],
+                    'nodes': [{'asn': f"AS{asn_num}", 'name': org_name}]
+                })
+        except:
+            pass
+
+        return jsonify({'error': f'فشل في جلب البيانات بسبب انقطاع شبكة السيرفر: {str(e)}'}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
