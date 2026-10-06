@@ -3,82 +3,112 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BGP Live Path Map</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <title>BGP Path Trace</title>
     <style>
-        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #121212; color: #fff; }
-        #controls { position: absolute; top: 15px; right: 15px; z-index: 1000; background: rgba(20,20,20,0.85); padding: 15px; border-radius: 8px; backdrop-filter: blur(5px); box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        input { padding: 8px 12px; border-radius: 4px; border: 1px solid #333; background: #222; color: #fff; width: 180px; }
-        button { padding: 8px 15px; border-radius: 4px; border: none; background: #007bff; color: #fff; cursor: pointer; font-weight: bold; }
-        button:hover { background: #0056b3; }
-        #map { width: 100vw; height: 100vh; }
-        #info { margin-top: 10px; font-size: 13px; max-width: 250px; word-wrap: break-word; color: #4caf50; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 40px 20px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 850px; background: #1e293b; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+        h2 { text-align: center; margin-bottom: 25px; color: #38bdf8; }
+        .search-box { display: flex; gap: 10px; margin-bottom: 30px; }
+        input { flex: 1; padding: 12px 15px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #fff; font-size: 16px; outline: none; }
+        button { padding: 12px 25px; border-radius: 6px; border: none; background: #0284c7; color: #fff; font-weight: bold; cursor: pointer; font-size: 16px; }
+        button:hover { background: #0369a1; }
+        .result-card { background: #0f172a; border-radius: 8px; padding: 20px; margin-top: 20px; border: 1px solid #334155; }
+        .info-header { font-size: 18px; line-height: 1.8; margin-bottom: 20px; border-bottom: 1px solid #334155; padding-bottom: 15px; }
+        .highlight { color: #38bdf8; font-weight: bold; }
+        .asn-badge { background: #0369a1; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+        .path-visual { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 15px; background: #1e293b; padding: 15px; border-radius: 8px; font-family: monospace; font-size: 16px; color: #4ade80; }
+        .arrow { color: #94a3b8; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { text-align: right; padding: 12px; border-bottom: 1px solid #334155; }
+        th { color: #94a3b8; background: #1e293b; }
+        .error { color: #f87171; text-align: center; padding: 15px; }
     </style>
 </head>
 <body>
-    <div id="controls">
-        <input type="text" id="ipInput" value="91.205.42.55" placeholder="أدخل IP هنا">
-        <button onclick="traceIP()">رسم المسار</button>
-        <div id="info"></div>
+    <div class="container">
+        <h2>استعلام مسارات BGP</h2>
+        <div class="search-box">
+            <input type="text" id="ipInput" value="91.205.42.55" placeholder="أدخل IP هنا (مثال: 91.205.42.55)">
+            <button onclick="traceIP()">فحص المسار</button>
+        </div>
+
+        <div id="loading" style="display:none; text-align:center; color:#94a3b8;">جاري الاستعلام من شبكات BGP...</div>
+        <div id="errorBox" class="error" style="display:none;"></div>
+
+        <div id="result" style="display:none;">
+            <div class="result-card">
+                <div class="info-header">
+                    الـ IP المطلوب: <span id="outIp" class="highlight"></span><br>
+                    الـ ASN التابع له: <span id="outAsn" class="asn-badge"></span><br>
+                    اسم الشركة/الشبكة: <span id="outHolder" class="highlight"></span>
+                </div>
+
+                <div><b>المسار الكامل (AS-Path):</b></div>
+                <div id="pathPipeline" class="path-visual"></div>
+
+                <h4 style="margin-top: 25px; color: #94a3b8;">تفاصيل الشبكات المارة بالمسار:</h4>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>الترتيب</th>
+                            <th>الـ ASN</th>
+                            <th>اسم الشركة / الشبكة (Holder)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="nodesTable"></tbody>
+                </table>
+            </div>
+        </div>
     </div>
-    <div id="map"></div>
 
     <script>
-        const map = L.map('map').setView([30, 15], 3);
-        
-        // استبدال الخريطة بخريطة OpenStreetMap مجانية وبدون API Key
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-            maxZoom: 19
-        }).addTo(map);
-
-        let polyline = null;
-        let markers = [];
-
         async function traceIP() {
-            const ip = document.getElementById('ipInput').value;
-            const infoDiv = document.getElementById('info');
-            infoDiv.innerText = "جاري جلب مسار BGP...";
+            const ip = document.getElementById('ipInput').value.trim();
+            const loading = document.getElementById('loading');
+            const errorBox = document.getElementById('errorBox');
+            const result = document.getElementById('result');
 
-            if (polyline) map.removeLayer(polyline);
-            markers.forEach(m => map.removeLayer(m));
-            markers = [];
+            if (!ip) return;
+
+            loading.style.display = 'block';
+            errorBox.style.display = 'none';
+            result.style.display = 'none';
 
             try {
                 const res = await fetch(`/api/trace?ip=${ip}`);
                 const data = await res.json();
+                loading.style.display = 'none';
 
                 if (data.error) {
-                    infoDiv.innerText = "خطأ: " + data.error;
+                    errorBox.innerText = data.error;
+                    errorBox.style.display = 'block';
                     return;
                 }
 
-                infoDiv.innerText = "AS Path: " + data.as_path.join(' ➔ ');
+                document.getElementById('outIp').innerText = data.target_ip;
+                document.getElementById('outAsn').innerText = data.target_asn;
+                document.getElementById('outHolder').innerText = data.target_holder;
 
-                const latLngs = [];
+                // Path Pipeline (e.g. AS3452 -> AS234 -> AS234)
+                document.getElementById('pathPipeline').innerHTML = data.as_path.join(' <span class="arrow">➔</span> ');
+
+                // Table Rows
+                const tableBody = document.getElementById('nodesTable');
+                tableBody.innerHTML = '';
                 data.nodes.forEach((node, idx) => {
-                    if (node.lat && node.lng) {
-                        const pt = [node.lat, node.lng];
-                        latLngs.push(pt);
-
-                        const marker = L.circleMarker(pt, {
-                            radius: 7,
-                            color: idx === data.nodes.length - 1 ? '#ff4d4d' : '#00bcff',
-                            fillColor: '#007bff',
-                            fillOpacity: 0.9
-                        }).addTo(map).bindPopup(`<b>AS${node.asn}</b><br>الدولة: ${node.country || 'غير معروف'}`);
-
-                        markers.push(marker);
-                    }
+                    const row = `<tr>
+                        <td>${idx + 1}</td>
+                        <td><span class="asn-badge">${node.asn}</span></td>
+                        <td>${node.name}</td>
+                    </tr>`;
+                    tableBody.innerHTML += row;
                 });
 
-                if (latLngs.length > 1) {
-                    polyline = L.polyline(latLngs, { color: '#ff0055', weight: 3, opacity: 0.8, dashArray: '5, 10' }).addTo(map);
-                    map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
-                }
+                result.style.display = 'block';
             } catch (err) {
-                infoDiv.innerText = "فشل في الاتصال بالخادوم";
+                loading.style.display = 'none';
+                errorBox.innerText = "فشل في الاتصال بالسيرفر";
+                errorBox.style.display = 'block';
             }
         }
 
