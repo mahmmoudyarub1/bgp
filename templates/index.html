@@ -26,8 +26,10 @@
 
     <script>
         const map = L.map('map').setView([30, 15], 3);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; OpenStreetMap &copy; CARTO',
+        
+        // استبدال الخريطة بخريطة OpenStreetMap مجانية وبدون API Key
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
             maxZoom: 19
         }).addTo(map);
 
@@ -63,7 +65,7 @@
                         const marker = L.circleMarker(pt, {
                             radius: 7,
                             color: idx === data.nodes.length - 1 ? '#ff4d4d' : '#00bcff',
-                            fillColor: '#fff',
+                            fillColor: '#007bff',
                             fillOpacity: 0.9
                         }).addTo(map).bindPopup(`<b>AS${node.asn}</b><br>الدولة: ${node.country || 'غير معروف'}`);
 
@@ -72,7 +74,7 @@
                 });
 
                 if (latLngs.length > 1) {
-                    polyline = L.polyline(latLngs, { color: '#00ffcc', weight: 3, opacity: 0.8, dashArray: '5, 10' }).addTo(map);
+                    polyline = L.polyline(latLngs, { color: '#ff0055', weight: 3, opacity: 0.8, dashArray: '5, 10' }).addTo(map);
                     map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
                 }
             } catch (err) {
